@@ -1,0 +1,484 @@
+---
+title: "Investigating portfolio optimisation using GA"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE)
+```
+## 1.Introduction
+In this report, I will use GA(genetic algorithm) package and quantmod package to conduct analysis about portfolio optimisation.More specifically, Value-at-Risk. First, necessary libraries are imported.
+```{r importing libraries, echo=TRUE}
+library(quantmod)
+library(GA)
+```
+## 2.Construction of a portfolio using GA package
+
+### 2.1 Getting the stocks prices from 2019-01-01 to 2021-01-01.
+I have chosen 8 stocks which either me or my acquaintance has ever invested in and they come from several different sectors. By selecting portfolio in this way, the report would fit purposes for this module as well as for shedding some light on real-world investment. I have chosen the time period from 2019 to 2021 so that I have a 2 years time span's data to feed into GA and then there is one year from 2021 till now to evaluate the portfolio on.
+```{r include=FALSE}
+getSymbols('600378.ss',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('002405.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('002230.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('300081.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('300459.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('000795.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('600519.ss',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('600660.ss',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+getSymbols('002390.sz',src = 'yahoo', from='2019-01-01', to='2021-01-01')
+```
+### 2.2 Forming the portfolio data fram and covariance matrix from which I calculate the risk and renaming the matrix with the abbreviations of  the stocks.
+```{r}
+myReData <- data.frame(as.xts(merge(dailyReturn(`600378.SS`), 
+                              dailyReturn(`002405.SZ`),
+                              dailyReturn(`002230.SZ`),
+                              dailyReturn(`300081.SZ`),
+                              dailyReturn(`000795.SZ`),
+                              dailyReturn(`300459.SZ`),
+                              dailyReturn(`600660.SS`),
+                              dailyReturn(`002390.SZ`))))
+colnames(myReData) <- c('hh','swtx','kdxf','hxdf','ylh','tmm','fybl','xbzy')
+CovMatrix <-cov(myReData)
+my_mean <- apply(myReData,2,mean)
+```
+### 2.3 Constrcution of evaluation function and setting parameters for GA.
+To construct the evaluation function, we need to take into consideration the return and risk at the same.
+
+First we map the weights into the interval of [0,1] by dividing each weight with the total sum of weights and thus they represent the proportion of investment in each stock. Average daily return is easily required by calculating inner vector product between weights vector and return vector.
+
+Risk value is obtained by conducting element-wise multiplication on covariance matrix of the stocks and the weight matrix of the stocks, which is built by using outer( ) function to perform exterior product on the pairs of weights, and summing all terms up.
+
+Having done so, we are able to build the evaluation function from what we obtained earlier.Since we want to maximise the return while minimise the risk, obviously this fitness value has a positive relationship with return and negative one with risk. So we put the expression of return over that of risk. The original risk value could be negative or positive. Simply placing the risk value at the denominator would result in a non-monotone relationship as the fitness value goes to infinity when risk approaches 0 from positive axis and goes to minus infinity when approaching 0 from negative axis. In order to fix the this problem, we deliberately construct which map the risk value onto the interval of [0,1]. Sigmoid function does this job perfectly. 
+
+I use lsSelection to select parent after comparing the performance among the candidates. BlxCrossover and  nrsMutation are chosen for performance reasons after some comparisons. The crossover rate is set to 0.6 due to what I have read in other papers about GA saying that a high crossover rate would result in sub-optimal solutions. Mutation rate is set to 0.05 as it is commonly thought to perform well, not too high so that the population change irregularly and slow down convergence speed nor too low that it could not escape local optima. Population size is set to 100 which I consider a moderate amount and max iteration is set to 200 as I found sometimes the best fitness could still improve after 150 iterations but seldom does so after 200 iterations.
+```{r echo=FALSE}
+set.seed(5)
+eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*my_mean)
+  Risk <- sum(CovMatrix*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+}
+
+gaControl('real-valued'=list(selection = 'gareal_lsSelection',
+                             crossover = 'gareal_blxCrossover'),
+                             mutation = 'gareal_nraMutation')
+
+GA <- ga(type = "real-valued", fitness = eval, 
+         lower = c(0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+plot(GA)
+as.vector(GA@solution)
+solu_weight <- as.vector(GA@solution/sum(GA@solution))
+solu_weight
+```
+To make the examination easier, I scale the return, risk and fitness values in the following section by 10^4 instead of scaling them in the building of evaluation function just to avoid expressing the preference of return or risk in the first place.
+
+The solution's return and risk values are `r 10^4*sum(solu_weight*my_mean)` and `r 10^4*sum(CovMatrix*outer(solu_weight,solu_weight))` respectively.
+
+## 3. Evaluation on future data
+
+### 3.1 Generating other possible portfolios and get data ready for exploration.
+The data used for evaluation are from 2021-01-02 to 2022-01-01. We deliberately generate a balanced portfolio, whose weights are all equal for each stock, and a random portfolio, whose weights are randomly produced.
+```{r include=FALSE}
+getSymbols('600378.ss',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('002405.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('002230.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('300081.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('300459.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('000795.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('600519.ss',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('600660.ss',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+getSymbols('002390.sz',src = 'yahoo', from='2021-01-02', to='2022-01-01')
+newReData <- data.frame(as.xts(merge(dailyReturn(`600378.SS`), 
+                              dailyReturn(`002405.SZ`),
+                              dailyReturn(`002230.SZ`),
+                              dailyReturn(`300081.SZ`),
+                              dailyReturn(`000795.SZ`),
+                              dailyReturn(`300459.SZ`),
+                              dailyReturn(`600660.SS`),
+                              dailyReturn(`002390.SZ`))))
+NewCovMatrix <-cov(newReData)
+new_mean <- apply(newReData,2,mean)
+```
+
+```{r echo=FALSE}
+set.seed(5)
+balanced_weight <-  rep(0.125,8)
+balanced_weight
+random <-  sample(1:100,8,replace = TRUE)
+random_weight <- random/sum(random)
+random_weight
+future_eval <- function(x) 
+  { 
+  Target_mean <- sum(x*new_mean)
+  Risk <- sum(NewCovMatrix*outer(x,x))
+  return(Target_mean/(1+exp(Risk)))
+  
+}
+solu_weight
+```
+The weights are generated in the order of balanced method, randomly chosen method and evolution method.
+
+### 3.2 Performance comparison between the 3 portfolios on future data.
+
+#### 3.2.1 On future data
+The GA generated portfolio's return and risk are `r 10^4*sum(solu_weight*new_mean)` and `r 10^4*sum(NewCovMatrix*outer(solu_weight,solu_weight))` respectively.
+
+The balanced portfolio's return and risk are `r 10^4*sum(balanced_weight*new_mean)` and `r 10^4*sum(NewCovMatrix*outer(balanced_weight,balanced_weight))` respectively.
+
+The random portfolio's return and risk are `r 10^4*sum(random_weight*new_mean)` and `r 10^4*sum(NewCovMatrix*outer(random_weight,random_weight))` respectively.
+
+We can see that GA generated portfolio has the highest return as well as the highest risk. The balanced portfolio performs quite good. Its return is the second among the 3 sets of portfolio while its risk is the lowest. The randomly generated portfolio's return is the lowest, while its risk is the second.
+
+If we input those values into the fitness function, the results for each portfolio is `r 10^4*future_eval(solu_weight)`, `r 10^4*future_eval(balanced_weight)` and `r 10^4*future_eval(random_weight)` respectively.
+
+The results show that GA portfolio outperforms the rest in the future data. In the meantime, the balanced portfolio performs better than random portfolio. So the evolved portfolio will definitely do the investors good on future stock investment. However, there is one question left to be answered, that is whether the balanced portfolio could outperform the random portfolio in the past data? This question is easy to answer by computing the return, risk and fitness value on the past data.
+
+#### 3.2.2 On past data
+The return,risk and fitness value of evolved portfolio on past data are `r 10^4*sum(solu_weight*my_mean)`, `r 10^4*sum(CovMatrix*outer(solu_weight,solu_weight))` and `r 10^4*eval(solu_weight)` respectively.
+
+The return,risk and fitness value of balanced portfolio on past data are `r 10^4*sum(balanced_weight*my_mean)`, `r 10^4*sum(CovMatrix*outer(balanced_weight,balanced_weight))` and `r 10^4*eval(balanced_weight)` respectively.
+
+The return,risk and fitness value of random portfolio on past data are `r 10^4*sum(random_weight*my_mean)`, `r 10^4*sum(CovMatrix*outer(random_weight,random_weight))` and `r 10^4*eval(random_weight)` respectively.
+
+### 3.2.3 Some observations on the performances.
+We can see a rather similar pattern of behaviours from the 3 portfolios on past data as we had seen on the future data. The evolved portfolio still does the best on return while takes the highest risk as well. Whereas the balanced portfolio returns slightly higher than random portfolio and takes the lowest risk. The random portfolio returns the least and takes the medium risk.
+
+It looks like our evaluation function cares less about the risk and devotes itself fully to generating the greatest return. In the following section we are going to verify our hypothesis and if our hypothesis stands, then we are to tune our evaluation function so that it totally favours risk or return and thus result in showing different behaviours of weighting the stocks.
+
+## 4. Different balances of return and risk
+
+### 4.1 Analysis on the behaviour of our evaluation function
+In the previous section we saw that our evaluation function seems to prefer heavily on return and totally disregards the risk. Let's have a closer look at the numbers as it enables us to feel it more intuitively. 
+
+The data we are looking at comes from the past(2019-2021).The following table shows the corresponding returns, risks and weights from the 8 chosen stocks.
+```{r echo=FALSE}
+print('Return     Risk     weight percentage')
+Variance <- c()
+for(i in 1:8){
+  Variance <- append(Variance,CovMatrix[i,i])
+}
+pretty_mean <- 1000*as.vector(my_mean)
+weight_per <- 100*solu_weight
+pretty_va <- 1000*Variance
+data.frame(pretty_mean,pretty_va,weight_per)
+```
+From the table, it is clear that our evolved solution weights heavily on stock 1. The percentage is over 99 which is dominating. Looking at the return and risk data of stock 1, it draws our attention that the return of stock 1 is the highest and it has a medium risk. 
+
+So far it is intuitively verified that our evaluation function focuses hugely on return as it attributes great weight on the stock with the highest return. As for the risk, we are still not sure how it is related to our function. Obviously this does not look like a good portfolio as it is so imbalanced. In order to tackle this problem,we are going to tweak our function in the following section  to reach the effect of extremely return-focused and risk-focused respectively, and function lies somewhere in between who takes into account both risk and return.
+
+Looking first at the sigmoid function we used earlier.
+```{r echo=FALSE}
+sigmoid <- function(x){
+  1/(1+exp(-x))
+  
+}
+variable <- seq(-10,10,0.1)
+plot(variable,sigmoid(variable))
+```
+We can easily see that the derivative of sigmoid hits its maximum at 0. In fact, it can be easily calculated that the derivative of sigmoid function f(x) is f(x)(1-f(x)), which maximises at 0 with the value of 0.25. Simply consider return and risk value as variables, we can see that the evaluation function is linear to return but inverse quadratic to risk, which means that it is more sensitive to risk. This roughly gives us a hint that by tuning the coefficient of risk, for example simply increase the sum of weighted covariance multiple times, the evaluation function would be more sensitive to risk and thus favours the less risky portfolios.
+
+### 4.2 Tweaking the evaluation function.
+
+#### 4.2.1 Safe evaluation function(coefficient set as 1000)
+```{r echo=TRUE}
+set.seed((5))
+safe_eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*my_mean)
+  Risk <- 1000*sum(CovMatrix*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+  
+}
+safe_GA <- ga(type = "real-valued", fitness = safe_eval, 
+         lower = c(0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+plot(safe_GA)
+as.vector(safe_GA@solution)
+```
+We observe that this time GA places a considerable weight on stock 8, and stock 1 remains to be dominated among the stocks. Recall from the previous table, we know that stock 8 has the lowest risk value. This indicated that our tweak is working and changing the evaluation function so that it now takes into consideration the risk. Let's experiment more by adding more weight to risk in the evaluation function and see what solution it would produce.
+
+#### 4.2.2 Even Safer evaluation function(coefficient set as 1000000)
+```{r echo=FALSE}
+set.seed(5)
+safer_eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*my_mean)
+  Risk <- 1000000*sum(CovMatrix*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+  
+}
+safer_GA <- ga(type = "real-valued", fitness = safer_eval, 
+         lower = c(0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+plot(safer_GA)
+as.vector(safer_GA@solution)
+
+```
+This time it is more obvious that the solution favours stock 7 the most. This is because it has the lowest variance of 0.48 and by increasing the coefficient of 'Risk', now the evaluation function favours a lot more stock 7 than previously. So the hypothesis has been proven intuitively. The detailed mathematical inference is provided below.
+
+$$ \frac{\partial f}{\partial w_i} =\frac {(x_i(1+exp(\Sigma\Sigma w_iw_j\sigma_{ij}) - C*exp(C*\Sigma\Sigma w_iw_j\sigma_{ij})*\Sigma w_ix_i*(C*\Sigma w_j\sigma_{ij})}{(1+exp(C*\Sigma\Sigma w_iw_j\sigma_{ij}))^2} $$
+$$ \mbox{where} x_i \mbox{is the i-th value of the mean daily return for stock i,}  w_i  \mbox{is the weight for that stock,}$$  
+$$\sigma_{ij} \mbox{is the covariance of stock i and stock j, C is the constant with which we tune.}$$
+As we can see, the 'safer' GA behaves like the step function, which is very commonly seen when we tune the weight of neural nets extremely high. Also this risk-averse evaluation function converges slower than risky ones, which fits well with our intuitive, although may not be theoretically correct. 
+ 
+To dive into this intuitive, we can see that C is very closely related to the covariance terms. By tuning on parameter C, the partial derivative of the function changes accordingly, and those stock that has a larger variance thus has a large derivative, which means the changing rate of their weight would impact on the fitness value greater. The fitness function would receive more feedback when we tune on the weight of the stock with larger variance. 
+ 
+Notice that our sigmoid function for risk has a positive symbol before the variable rather than normal sigmoid with a negative symbol. This is because we want to the negative covariance sum to stand for safe, so we want to map large negative covariance to 1, that's why I have changed the symbol here. The derivative would be a little different in terms of symbol. However that does not invalidate our findings about the effect of tuning C.
+ 
+Since we now know that C decides whether the fitness function would prefer stock with large variance or not, we are totally entitled to change it as large as possible or as little as possible but no smaller than 0 as we do not wish to map positive covariance sum to negative, to see the impact.
+ 
+#### 4.2.3 Very risky evaluation function(coefficient set as 0)
+```{r echo=FALSE}
+set.seed(5)
+risky_eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*my_mean)
+  Risk <- 0*sum(CovMatrix*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+  
+}
+risky_GA <- ga(type = "real-valued", fitness = risky_eval, 
+         lower = c(0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+plot(risky_GA)
+as.vector(risky_GA@solution)
+```
+We can see that when C is set to 0, the evolved portfolio weights almost all on stock 1, which shows completely favour of return and ignores risk.
+
+Let's examine how all 6 portfolios perform by looking at their return,risk and fitness value both on past data and future data.
+
+### 4.2.4 Performance of 6 portfolio on past data
+For simplicity, I only show the results here. I have multiplied 10^4 with them for easier inspection.
+```{r echo=FALSE}
+safe_weight <- as.vector(safe_GA@solution/sum(safe_GA@solution))
+safer_weight <- as.vector(safer_GA@solution/sum(safer_GA@solution))
+risky_weight <- as.vector(risky_GA@solution/sum(risky_GA@solution))
+safe_weight
+```
+
+Safe portfolio performance: return: `r 10000*sum(safe_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(safe_weight,safe_weight))`, fitness: `r 10000*safe_eval(safe_weight)`
+
+Safer portfolio performance: return: `r 10000*sum(safer_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(safer_weight,safer_weight))`, fitness: `r 10000*eval(safer_weight)`
+
+Risky portfolio performance: return: `r 10000*sum(risky_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(risky_weight,risky_weight))`, fitness: `r 10000*eval(risky_weight)`
+
+Originally evolved portfolio performance: return: `r 10000*sum(solu_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(solu_weight,solu_weight))`, fitness: `r 10000*eval(solu_weight)`
+
+Balanced portfolio performance: return: `r 10000*sum(balanced_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(balanced_weight,balanced_weight))`, fitness: `r 10000*eval(balanced_weight)`
+
+Random portfolio performance: return: `r 10000*sum(random_weight*my_mean)`, risk: `r 10000*sum(CovMatrix*outer(random_weight,random_weight))`, fitness: `r 10000*eval(random_weight)`
+
+### 4.2.5 Performance of 5 portfolio on future data
+Similar results can be obtained on future data as well.
+
+Safe portfolio performance: return: `r 10000*sum(safe_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(safe_weight,safe_weight))`, fitness: `r 10000*future_eval(safe_weight)`
+
+Safer portfolio performance: return: `r 10000*sum(safer_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(safer_weight,safer_weight))`, fitness: `r 10000*future_eval(safer_weight)`
+
+Risky portfolio performance: return: `r 10000*sum(risky_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(risky_weight,risky_weight))`, fitness: `r 10000*future_eval(risky_weight)`
+
+Originally evolved portfolio performance: return: `r 10000*sum(solu_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(solu_weight,solu_weight))`, fitness: `r 10000*future_eval(solu_weight)`
+
+Balanced portfolio performance: return: `r 10000*sum(balanced_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(balanced_weight,balanced_weight))`, fitness: `r 10000*future_eval(balanced_weight)`
+
+Random portfolio performance: return: `r 10000*sum(random_weight*new_mean)`, risk: `r 10000*sum(NewCovMatrix*outer(random_weight,random_weight))`, fitness: `r 10000*future_eval(random_weight)`
+
+### 4.2.6 Some observations 
+
+Everything is well within our expectation that the riskier the portfolio is,the more it focuses on return and ignores risk,and vice versa. However there is one thing to note that the risky weights outperforms originally evolved weights on the initial fitness function by just a little on both past and future data.  
+
+## 5. Integrated GA approach for selecting assets and evolving the weights.
+In this second part of the report, we are going to build a large pool of assets from which we select some good ones to work on. This part would involve using GA twice, one for selecting the assets, another for evolving the weights.
+
+### 5.1 Building the pool of assets and pick 10 good ones among them.
+For this part we randomly select 50 stocks from Shanghai Stock Exchange(SSE) and subsequently cherry pick some out on the criteria that the chosen stocks would ideally give rather generous returns and bring less risks to the investors.
+First we scrape all the company code from the website https://topforeignstocks.com/indices/components-of-the-shanghai-composite-index/.
+We randomly pick 42 out of 1542 stocks name them from 1 to 42 for simplicity and bring in the 8 stocks from part 1 to form a pool of 50.
+```{r include=FALSE}
+getSymbols('600378.ss',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('002405.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('002230.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('300081.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('300459.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('000795.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('600519.ss',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('600660.ss',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+getSymbols('002390.sz',src = 'yahoo', from='2020-01-01', to='2021-01-01')
+library(rvest)
+webpage <- read_html('https://topforeignstocks.com/indices/components-of-the-shanghai-composite-index/') %>%
+  html_nodes('table.tablepress') %>%
+  html_table()
+code <- data.frame(webpage)[3]
+set.seed(15)
+sample_list <- sample(1:1542,42,replace = FALSE)
+samples <- code[sample_list,1]
+samples <- paste(samples,'.ss',sep = '')
+
+for(i in 1:42){
+  getSymbols(samples[i],,src = 'yahoo', from='2020-01-01', to='2021-01-01')
+}
+random_stocks <- data.frame(as.xts(merge(dailyReturn(`601236.SS`),
+     dailyReturn(`600460.SS`),
+     dailyReturn(`603619.SS`),
+     dailyReturn(`601168.SS`),
+     dailyReturn(`600988.SS`),
+      dailyReturn(`600279.SS`),
+       dailyReturn(`603660.SS`),
+        dailyReturn(`601958.SS`),
+         dailyReturn(`603393.SS`),
+          dailyReturn(`603319.SS`),
+           dailyReturn(`601000.SS`),
+            dailyReturn(`601598.SS`),
+             dailyReturn(`600122.SS`),
+              dailyReturn(`600650.SS`),
+               dailyReturn(`600668.SS`),
+                dailyReturn(`600853.SS`),
+                 dailyReturn(`603690.SS`),
+                  dailyReturn(`600016.SS`),
+                   dailyReturn(`600195.SS`),
+                    dailyReturn(`603015.SS`),
+                     dailyReturn(`600785.SS`),
+                      dailyReturn(`600202.SS`),
+                       dailyReturn(`600236.SS`),
+                        dailyReturn(`603926.SS`),
+                         dailyReturn(`603968.SS`),
+                          dailyReturn(`600578.SS`),
+                           dailyReturn(`600532.SS`),
+                            dailyReturn(`603090.SS`),
+                             dailyReturn(`600370.SS`),
+                              dailyReturn(`600478.SS`),
+                               dailyReturn(`600152.SS`),
+                                dailyReturn(`600467.SS`),
+                                 dailyReturn(`600698.SS`),
+                                  dailyReturn(`603580.SS`),
+                                   dailyReturn(`603843.SS`),
+                                    dailyReturn(`600183.SS`),
+                                     dailyReturn(`601998.SS`),
+                                      dailyReturn(`600271.SS`),
+                                       dailyReturn(`600189.SS`),
+                                        dailyReturn(`603117.SS`),
+                                         dailyReturn(`600871.SS`),
+                                          dailyReturn(`601919.SS`),
+                                              dailyReturn(`600378.SS`),    ## 8 stocks from part 1
+                                              dailyReturn(`002405.SZ`),
+                                              dailyReturn(`002230.SZ`),
+                                              dailyReturn(`300081.SZ`),
+                                              dailyReturn(`000795.SZ`),
+                                              dailyReturn(`300459.SZ`),
+                                              dailyReturn(`600660.SS`),
+                                              dailyReturn(`002390.SZ`))))
+     
+random_stocks
+```
+### 5.2 Selecting stocks from the pool.
+To cull the desired stocks, we define a criteria on which they are chosen. Overall we want the stocks to give us the most award while they remain stable, so we use the ratio of the sum of all chosen stock's average daily returns and the sum of their covariance to decide their fitness. We use binary GA to maintain balanced weights at this stage as we do not wish to add any bias or coincidence to the portfolio. We also limit the number of chosen stocks to be at maximum 15.
+```{r include=FALSE}
+meanless <- apply(random_stocks,2,mean)
+CovStocks <- cov(random_stocks)
+```
+
+```{r echo=FALSE}
+criteria <- function(z) 
+{ 
+  if(sum(z) <= 15)
+    return(sum(z*meanless)/(1+exp(sum(as.vector(CovStocks*outer(z,z)))))) else return(0)
+}
+selection <- ga(type = "binary", fitness = criteria, nBits = 50,maxiter = 100,pcrossover = 0.7, pmutation = 0.05,popSize = 200)
+```
+### 5.3 Performance comparisons with evolved portfolio in part1.
+The selected portfolio's performance is shown below:
+return : `r 10000*sum(as.vector(selection@solution)*meanless)/(sum(selection@solution))`, risk: `r 10000*sum(CovStocks*outer(as.vector(selection@solution),as.vector(selection@solution)))`, fitness: `r 10000*criteria(as.vector(selection@solution))`
+
+Recall from section 3.2.2 we got the following result: 'The return,risk and fitness value of evolved portfolio on past data are `r 10^4*sum(solu_weight*my_mean)`, `r 10^4*sum(CovMatrix*outer(solu_weight,solu_weight))` and `r 10^4*eval(solu_weight)` respectively.'
+
+Note that the risk of 15 stocks is dramatically great. This is because the covariance matrix is of different size from part1 and we have done sigmoid transformation on it. Thus the risk value offers no reference value. The fitness values can not be compared directly due to the same reason. The return is considerably higher than part1, which is reasonable and possible enough as the more stocks we have at hands, the larger chance we stand of being able to select those that offer higher returns. In this case the average return increases by almost 50% from 22 to 30 and this is only a balanced portfolio! let's try to optimise this portfolio to see how good result it can achieve. Since risk can't be directly compared, we focus solely on return in both scenarios where we prioritise return and risk, respectively.
+
+### 5.4 Evolving portfolio from part2 to acquire risk-averse and profit-focused portfolios.
+
+#### 5.4.1 Safe portfolio
+The selected stocks' mean returns and variances are shown for inspection and performance analysis.
+```{r echo=FALSE}
+chosen <- random_stocks[,selection@solution == 1]
+chosen_mean <- apply(chosen,2,mean)
+chosen_cov <- cov(chosen)
+print('Return     Risk')
+
+new_Variance <- c()
+for(i in 1:15){
+  new_Variance <- append(new_Variance,chosen_cov[i,i])
+}
+prett_mean <- 1000*as.vector(chosen_mean)
+prett_va <- 1000*new_Variance
+data.frame(prett_mean,prett_va)
+set.seed(5)
+SA_eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*chosen_mean)
+  Risk <- 1000000*sum(chosen_cov*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+}
+SA_GA <- ga(type = "real-valued", fitness = SA_eval, 
+         lower = c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+
+as.vector(SA_GA@solution)
+```
+Return : `r 10000*sum(as.vector(SA_GA@solution)*chosen_mean)/(sum(SA_GA@solution))`.
+This safe portfolio weighs the most on stock 15, who has the second lowest variance, yet still offers a higher return than balanced one. By just looking at the return from a safe portfolio, we are very optimistic about the return from an aggressive one!
+
+#### 5.4.2 Aggressive portfolio
+```{r echo=FALSE}
+AG_eval <- function(z) 
+  { weights <- z/sum(z)
+  Target_mean <- sum(weights*chosen_mean)
+  Risk <- 0*sum(chosen_cov*outer(weights,weights))
+  return(Target_mean/(1+exp(Risk)))
+}
+AG_GA <- ga(type = "real-valued", fitness = AG_eval, 
+         lower = c(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0),
+         upper = c(100,100,100,100,100,100,100,100,100,100,100,100,100,100,100),
+         pcrossover = 0.6,
+         pmutation = 0.05,
+         popSize = 100,
+         maxiter = 200
+         )
+
+as.vector(AG_GA@solution)
+```
+Return : `r 10000*sum(as.vector(AG_GA@solution)*chosen_mean)/(sum(AG_GA@solution))`
+The result is of no surprise. This time the aggressive portfolio weighs the most on stock 11, whose mean return is 6.4, the highest of 15 stocks.
+
+### 5.5 Final temporary conclusion.
+
+From the last section, we can conclude that by choosing from a larger pool of stocks and increasing the size of portfolio, higher return could very possibly be received. The risk is somehow unable to be measured numerically here due to the structure of function. However by looking at the risk table, we can see that the highest variance is 2.21 of stock 13. Comparing with the variances of stocks from part1, whose highest is 1.67, although it looks riskier,in fact, stock 13, has not been placed considerable weights in both scenarios. Therefore it is safe to say that this portfolio of 15 stocks is not very likely to be riskier than the previous one.
+
