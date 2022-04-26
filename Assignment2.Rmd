@@ -1,0 +1,490 @@
+---
+title: "Assignment 2 - Algorithmic trading"
+author: 'Minghao Zhong(Section 1,2,3) and Napat Viseshsin(Section 4,5)'
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1.Introduction
+
+Algorithmic Trading(AT) is a rapidly growing market regarded as lucrative and potentially massive improvements to be made.It is said that 'The Algorithmic Trading Market is expected to witness a CAGR of 10.5% over the forecast period (2022-2027).'by the report <https://www.reportlinker.com/p06246232/Algorithmic-Trading-Market-Growth-Trends-COVID-19-Impact-and-Forecasts.html?utm_source=GNW>.
+
+Deep learning now is widely applied to many areas such as medical diagnosis, automatic driving,facial recognition,and some other analytic tasks. RNN(Recurrent Neural Network) is one kind of neural network particularly good at dealing with sequential data, of which LSTM(Long Short-Term Memory) is an variant.LSTM is used to tackle tasks involving long sequential data, which would expose RNN to the problem of gradient vanishing, commonly seen in a feed forward neural network.
+
+In this report, a preliminary effort is made on applying LSTM to FTS(Financial Times Series) in order to predict the future rates and realize the Algorithmic Trading technique. The proposed method is then evolved by an evolutionary approach and compared against a traditional method in Finance dealing with FTS.
+
+Some related previous work are listed as following:
+
+[IEEE Xplore Full-Text PDF:](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=8372087) Time-weighted LSTM Model with Redefined Labeling for stock price prediction
+
+<https://doi.org/10.1016/j.neucom.2018.09.082> Time series forecasting of petroleum production using deep LSTM recurrent networks
+
+<https://doi.org/10.3390/su10103765> Genetic Algorithm-Optimized Long Short-Term Memory Network for Stock Market Prediction
+
+<https://doi.org/10.1109/ACCESS.2020.3047109> Stock Prediction Based on Genetic Algorithm Feature Selection and Long Short-Term Memory Neural Network
+
+<https://doi.org/10.1016/j.neucom.2012.10.043> Evolving RBF neural networks for rainfall prediction using hybrid particle swarm optimization and genetic algorithm
+
+<https://doi.org/10.1111/j.1365-2478.2012.01080.x> Reservoir permeability prediction by neural networks combined with hybrid genetic algorithm and particle swarm optimization
+
+<https://doi.org/10.1016/j.artmed.2011.06.008> Hybrid genetic algorithm-neural network: Feature extraction for unpreprocessed microarray data
+
+<https://doi.org/10.1007/s13042-010-0004-x> Genetic Algorithm-Neural Network (GANN): a study of neural network activation functions and depth of genetic algorithm search applied to feature selection
+
+<https://doi.org/10.1016/j.eswa.2014.07.039> A proposed iteration optimization approach integrating backpropagation neural network with genetic algorithm
+
+<https://arxiv.org/abs/1803.01271v2> An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling <https://doi.org/10.1007/978-3-319-93351-1_32> Stock Price Forecast Based on LSTM Neural Network
+
+<https://doi.org/10.1007/s00521-019-04504-2> Stock closing price prediction based on sentiment analysis and LSTM
+
+<https://doi.org/10.1109/ACCESS.2020.3004284> Forecasting Stock Prices Using a Hybrid Deep Learning Model Integrating Attention Mechanism, Multi-Layer Perceptron, and Bidirectional Long-Short Term Memory Neural Network
+
+<https://doi.org/10.1016/j.eswa.2018.03.002> Forecasting the volatility of stock price index: A hybrid model integrating LSTM with multiple GARCH-type models
+
+```{r importing libraries, include=FALSE}
+library(keras)
+library(ggplot2)
+library(quantmod)
+```
+
+## 2.LSTM model and its predictions.
+
+The data we are working with is THB/CNY from 2010 to 2020. We have deliberately selected this time period for our purpose as later we will show that in most cases in FTS, the prices or rates are very hard to predict accurately due to their natures. The stock market is highly sensitive to sudden eruptions of major events such as financial crisis, war, public health crisis(e.g., COVID19),etc. By choosing this specific time span, we have avoided the problem of encountering some famous major events like 2008 Subprime Mortgage crisis and 2020 COVID19 outbreak.
+
+```{r include=FALSE}
+getSymbols('THBCNY=X',src = 'yahoo',from = "2010-01-01", to = "2020-01-02")
+data <- `THBCNY=X`
+data <- na.omit(data)
+```
+
+```{r echo=FALSE}
+plot(data,type="l", col="red", lwd=2)
+
+```
+
+We use the time period of 2010 to 2018 as training set, 2018 to 2019 as validation set, 2019 to 2020 as test set.
+
+Scaling is necessary as we are going to pass the data through a neural network, which is supposed to receive scaled data in order to perform well.
+
+To create a data frame of time series data, we also have to get lagged data for a certain amount of days, which in our report it is taken as 10, in order to be able to predict the 11th day with the previous 10 days. This data frame is then properly truncated to get rid of the NA values produced by the lagging operations and split into values and targets.
+
+```{r include=FALSE}
+
+raw_train <- coredata(data)[1:2000]
+raw_val <- coredata(data)[2001:2300]
+raw_test <- coredata(data)[2301:2605]
+upper <- max(raw_train)
+lower <- min(raw_train)
+get_data = function(x,lag){
+  #  x <- diff(x,differences = 1)   
+  df = data.frame(x)
+  for(i in 1:lag){
+    output <- Lag(x,i)
+    df <-  cbind(df,output)
+  }
+  return(df)
+}
+scaling = function(data) {
+  (data - lower) / (upper - lower)
+}
+
+inverse_scaling = function(data){
+  data*(upper-lower) + lower
+}
+
+train <- scaling(raw_train)
+
+val <- scaling(raw_val)
+
+test <- scaling(raw_test)
+lag <- 10
+x <- get_data(train,lag)
+z <- get_data(val,lag)
+y <- get_data(test,lag)
+
+x = x[(lag+1):dim(x)[1],]
+z = z[(lag+1):dim(z)[1],]
+y = y[(lag+1):dim(y)[1],]
+train_value <- x[,2:(lag+1)]
+train_target <- x[,1]
+val_value <- z[,2:(lag+1)]
+val_target <- z[,1]
+test_value <- y[,2:(lag+1)]
+test_target <- y[,1]
+
+train_value <- array(
+  data = as.numeric(unlist(train_value)),
+  dim = c(
+    dim(train_value)[1],
+    dim(train_value)[2],
+    1
+  )
+)
+
+train_target <- array(
+  data = as.numeric(unlist(train_target)),
+  dim = c(
+    dim(train_value)[1],
+    1,
+    1
+  )
+)
+
+val_value <- array(
+  data = as.numeric(unlist(val_value)),
+  dim = c(
+    dim(val_value)[1],
+    dim(val_value)[2],
+    1
+  )
+)
+
+val_target <- array(
+  data = as.numeric(unlist(val_target)),
+  dim = c(
+    dim(val_value)[1],
+    1,
+    1
+  )
+)
+
+
+test_value <- array(
+  data = as.numeric(unlist(test_value)),
+  dim = c(
+    dim(test_value)[1],
+    dim(test_value)[2],
+    1
+  )
+)
+
+test_target <- array(
+  data = as.numeric(unlist(test_target)),
+  dim = c(
+    dim(test_value)[1],
+    1,
+    1
+  )
+)
+```
+
+Now we are ready to build the LSTM model for prediction. As we have seen in the reference papers, a common approach is to use evolutionary methods such as Genetic Algorithm to evolve the neural network. However, we are not adopting this method in our report due to the limitation of computational resources at hand. Instead we select the hyper parameters for LSTM based on our experiences and intuitive of tuning neural networks.
+
+```{r include=FALSE}
+model = keras_model_sequential()%>%
+  layer_lstm(8, batch_input_shape = c(5,lag,1),stateful= TRUE)%>%
+#  layer_batch_normalization()%>%
+#  layer_dropout(0.1)%>%
+#  layer_lstm(10,stateful= TRUE)%>%
+#  layer_dropout(0.1)%>%
+#  layer_lstm(10,stateful= TRUE)%>%
+#  layer_dense(10,activation='relu')%>%
+#  layer_dropout(0.1)%>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = 'mean_squared_error',
+  optimizer = optimizer_nadam(learning_rate = 0.0001),  
+  metrics = 'mean_absolute_error'
+)
+
+history = model %>% fit(train_value, train_target, epochs=30, 
+                        batch_size=5, verbose=1,validation_data = list(val_value,val_target),shuffle=FALSE)
+```
+
+The reason of choosing 8 as hidden units and 30 epochs to train is that we found larger numbers of hidden units like 12 or 16 or even further tend to overfit the training data and the model performs badly on testing data. The number of epochs has a similar effect as well. So, we have chosen rather moderate numbers for these 2 hyper parameters. We don’t stack multiple LSTM layers or add dropout layers in between simply because by experiments, we found those kinds of structure don’t perform well on this data set. 
+
+After the training is done, we could have a look at the structure of the LSTM and the training and validation loss curve.
+
+```{r}
+summary(model)
+plot(history)
+```
+
+Now we can trained the LSTM, predictions on the test set can be made and plotted.
+
+```{r echo=FALSE}
+lstm_forecast <- model %>%
+  predict(test_value, batch_size = 5)
+test_target <- inverse_scaling(test_target)
+lstm_forecast <- inverse_scaling(lstm_forecast)
+```
+
+```{r echo=FALSE}
+ggplot() + geom_line(aes(x=c(1:length(lstm_forecast)),y=test_target,color='Test')) + 
+  geom_line(aes(x=c(1:length(lstm_forecast)),y=lstm_forecast,color='Predict')) + 
+  scale_color_manual(name = "Comparison", values = c("Test" = "darkblue", "Predict" = "red"))+
+  ylab('Values')+xlab('date')+ggtitle('Test period 2019-2020')
+```
+
+From the plot we can see the LSTM does not fit well with the test set. There is a wide gap between the ground truth and the predictions. Yet the predictions somehow is able to capture the trends. We will verify this statement by looking at both the numerical and graphical results.
+
+```{r include=FALSE}
+lstm_fit <- model %>%
+  predict(val_value, batch_size = 5)
+
+val_target <- inverse_scaling(val_target)
+lstm_fit <- inverse_scaling(lstm_fit)
+
+```
+
+```{r echo=FALSE}
+ggplot() + geom_line(aes(x=c(1:length(lstm_fit)),y=val_target,color='Validation')) + 
+  geom_line(aes(x=c(1:length(lstm_fit)),y=lstm_fit,color='LSTM_fit')) + 
+  scale_color_manual(name = "Comparison", values = c("Validation" = "darkblue", "LSTM_fit" = "red"))+
+  ylab('Values')+xlab('date')+ggtitle('Validation period 2018-2019')
+
+```
+
+```{r include=FALSE}
+lstm_trainfit <- model %>%
+  predict(train_value, batch_size = 5)
+
+train_target <- inverse_scaling(train_target)
+lstm_trainfit <- inverse_scaling(lstm_trainfit)
+```
+
+```{r echo=FALSE}
+ggplot() + geom_line(aes(x=c(1:length(lstm_trainfit)),y=train_target,color='Training')) + 
+  geom_line(aes(x=c(1:length(lstm_trainfit)),y=lstm_trainfit,color='LSTM_trainfit')) + 
+  scale_color_manual(name = "Comparison", values = c("Training" = "darkblue", "LSTM_trainfit" = "red"))+
+  ylab('Values')+xlab('date')+ggtitle('Training period 2010-2018')
+```
+
+```{r include=FALSE}
+train_diff <- diff(train_target,differences = 1) 
+trainforecast_diff <- diff(lstm_trainfit,differences = 1)
+
+test_diff <- diff(test_target,differences = 1) 
+forecast_diff <- diff(lstm_forecast,differences = 1) 
+
+```
+
+Taking the differences of predictions and that of true values, then we multiply these 2 vectors and get the results, in which greater than 0 stands for the moving direction is the same for prediction and true value, less than 0 for opposite direction, 0 means either prediction or true value is 0.
+
+On training set, the number of correct predictions is `r sum(trainforecast_diff*train_diff>0)`, that of wrong predictions is: `r sum(trainforecast_diff*train_diff<0)`. Number of one of the values is: `r sum(trainforecast_diff*train_diff==0)`.
+
+On test set, the number of correct predictions is: `r sum(forecast_diff*test_diff>0)`, that of wrong predictions is: `r sum(forecast_diff*test_diff<0)`. Number of one of the values is: `r sum(forecast_diff*test_diff==0)`.
+
+```{r echo=FALSE}
+ggplot() + geom_line(aes(x=c(1:length(test_diff)),y=test_diff,color='test_diff')) + 
+  geom_line(aes(x=c(1:length(test_diff)),y=forecast_diff,color='forecast_diff')) + 
+  scale_color_manual(name = "Comparison", values = c("test_diff" = "darkblue", "forecast_diff" = "red"))+
+  ylab('Values')+xlab('date')+ggtitle('First order difference on test set 2019-2020')
+```
+
+```{r echo=FALSE}
+ggplot() + geom_line(aes(x=c(1:length(train_diff)),y=train_diff,color='training_diff')) + 
+  geom_line(aes(x=c(1:length(train_diff)),y=trainforecast_diff,color='forecast_diff')) + 
+  scale_color_manual(name = "Comparison", values = c("training_diff" = "darkblue", "forecast_diff" = "red"))+
+  ylab('Values')+xlab('date')+ggtitle('First order difference on training set 2010-2018')
+```
+
+As we mentioned earlier, the graphs illustrate that in real-world trading, the fluctuations tend to be sharper whereas the predictions do not. This potentially showcases there are some other factors outside the stock market that impact the prices massively, such as those major events we made example of earlier.
+
+Although the prediction could not fully capture every bit of the true value, we are likely able to generate some profits on this LSTM model because of the slight differences of right trend predictions and wrong ones.
+
+Next, we apply GA to find the thresholds in the trading rules, named as buy and sell. Our trading rules is quite simple: if the prediction implies tomorrow's price would increase by a certain percentage greater than buy%, we decide to take long position, otherwise if it is less than sell%, we take short position.
+
+## 3. Utilising GA to evolve trading rules thresholds.
+
+```{r include=FALSE}
+library(GA)
+integrated_train_target <- c(raw_train[10],train_target)
+integrated_lstm_trainfit <-  c(raw_train[10],lstm_trainfit)
+integrated_test_target <- c(raw_test[10],test_target)
+integrated_lstm_forecast <- c(raw_test[10],lstm_forecast)
+```
+
+```{r include=FALSE}
+eval <- function(z) {
+  volume <- 1
+  share <- 0
+  buy <- z[1]
+  sell <- z[2]
+  IN <- FALSE
+  for(i in (1:(length(integrated_train_target)-1))){
+    if(100*(integrated_lstm_trainfit[i+1]-integrated_lstm_trainfit[i])/integrated_lstm_trainfit[i]>buy&IN==FALSE){
+      share <- volume/integrated_train_target[i]
+      IN <- TRUE
+    }else if(100*(integrated_lstm_trainfit[i+1]-integrated_lstm_trainfit[i])/integrated_lstm_trainfit[i]<sell&IN==TRUE){
+      volume <- share*integrated_train_target[i]
+      share <- 0
+      IN <- FALSE
+    }
+  }
+  if(IN==TRUE){
+    return(share*integrated_train_target[length(integrated_train_target)])
+  } else return(volume)
+  
+}
+
+gaControl('real-valued'=list(selection = 'gareal_lsSelection',
+                             crossover = 'gareal_blxCrossover'),
+                             mutation = 'gareal_rsMutation')
+
+GA <- ga(type = "real-valued", fitness = eval, 
+         lower = c(0,-0.1),
+         upper = c(0.1,0),
+         pcrossover = 0.6,
+         pmutation = 0.1,
+         popSize = 200,
+         maxiter = 100
+)
+
+```
+
+```{r echo=FALSE}
+plot(GA)
+```
+
+```{r echo=FALSE}
+summary(GA)
+```
+
+The trading strategy we apply is quite straightforward: we define 2 parameters, namely, buy and sell, as thresholds to indicate whether to buy or sell. If the prediction of next day would be higher to today’s closed price than the defined parameter, then we decide to buy. If the prediction of next day would be lower, then we decide to sell. These 2 thresholds are optimized on training data by GA to enable us to get the highest profit. 
+
+The fitness function of GA will aim to maximize the profit which is calculated by applying those 2 thresholds parameters on the overall training data. We then apply the thresholds to calculate the profit on test data and we believe the thresholds should work consistently on test data as they are evolved from a quite long period of training data.
+
+The configuration of GA is chosen based on our previous experiences of applying GA. The crossover rate is set relatively low to 0.6 to ensure the population does not change to fast. Mutation rate is set to 0.1, slightly higher than usual as we wish to escape the sub-optimal solution. The search domain is set to a very limited range as we found that by narrowing this range, the search of GA is more efficient at looking for the optimal thresholds in that limited range. Since we are dealing with currency, the fluctuations aren’t so fierce as what we would see in stock markets. 
+
+```{r echo=FALSE}
+profit_calculation <- function(high,low) {
+  volume <- 1
+  share <- 0
+  buy <- high
+  sell <- low
+  IN <- FALSE
+  for(i in (1:(length(integrated_test_target)-1))){
+    if(100*(integrated_lstm_forecast[i+1]-integrated_lstm_forecast[i])/integrated_lstm_forecast[i]>buy&IN==FALSE){
+      share <- volume/integrated_test_target[i]
+      IN <- TRUE
+    }else if(100*(integrated_lstm_forecast[i+1]-integrated_lstm_forecast[i])/integrated_lstm_forecast[i]<sell&IN==TRUE){
+      volume <- share*integrated_test_target[i]
+      share <- 0
+      IN <- FALSE
+    }
+  }
+  if(IN==TRUE){
+    return(share*integrated_test_target[length(integrated_test_target)])
+  } else return(volume)
+}
+
+```
+The profit evolved from GA is `r profit_calculation(GA@solution[1,1],GA@solution[1,2])`,which verifies our assumption and is very consistent with the profit calculated from training data.
+
+
+## 4. Comparison against traditional financial approach
+
+In this section we introduce a forecasting approach called “Holt-Winters forecasting”.
+
+It is used to model the trend, seasonal and irregular components of a time series. Holt-Winters decomposes a time series into 3 mentioned components: that is, estimating these three components. 
+‘’If you have a time series that can be described using an additive model with increasing or decreasing trend and seasonality, you can use Holt-Winters exponential smoothing to make short-term forecasts.’’ --- A Little Book of R For Time Series, Avril Coghlan (P41)
+Holt-Winters uses exponential smoothing to encode past values and use them to predict “typical” values for the present and future.
+‘’ Holt-Winters exponential smoothing estimates the level, slope, and seasonal component at the current time point. Smoothing is controlled by three parameters: alpha, beta, and gamma, for the estimates of the level, slope b of the trend component, and the seasonal component, respectively, at the current time point.’’ --- 
+A Little Book of R For Time Series, Avril Coghlan (P41)
+Holt Winter forecast method is contained in R library(forecast), which is very handy to use for this report.
+Jan 2010 to Oct 2018 is used for Holt Winter decomposition and predictions are made from Nov 2018 to Dec 2019.
+The details of Holt Winter decomposition and forecasting are listed below:
+
+```{r echo=FALSE}
+library(forecast)
+
+```
+
+```{r echo=FALSE}
+ts_data <- ts(as.double(data[,4]),start = c(2010,1),end=c(2018,10),frequency = 12)
+fit <- stl(ts_data,s.window = 'period')
+FIT <- ets(ts_data,model='AAA')
+pred <- forecast(FIT,14)
+FIT
+plot(fit, main='Decomposition of time series data 2010-2018')
+plot(pred, main = "Forecasts from Holt-Winters")
+```
+
+The predicted values form the blue line which shows a general positive trend. The accompanying shadow areas are 80% and 95% prediction intervals.
+
+For the optimizing purpose, we implement Differential Evolution to evolve the trading rules for the Holt-Winter decomposition.
+
+```{r include=FALSE}
+library(DEoptim)
+p <- coredata(pred$x)
+Holt_Winter <- function(z) {
+  volume <- 1
+  share <- 0
+#  buy <- z[1]
+#  sell <- z[2]
+  IN <- FALSE
+  for(i in (1:(length(p)-1))){
+    if(100*(p[i+1]-p[i])/p[i]>z[1]&IN==FALSE){
+      share <- volume/p[i]
+      IN <- TRUE
+    }else if(100*(p[i+1]-p[i])/p[i]<z[2]&IN==TRUE){
+      volume <- share*p[i]
+      share <- 0
+      IN <- FALSE
+    }
+  }
+  if(IN==TRUE){
+    return(share*p[length(p)])
+  } else return(volume)
+}
+DEResults <- DEoptim(fn = function(x){-Holt_Winter(x)},
+                     lower = c(0,-0.5),
+                     upper = c(0.5,0),
+                     DEoptim.control(itermax=50, NP=100))
+
+```
+
+Since Holt Winter is based on monthly return rather than daily, we calculate the profit on both monthly and daily basis in order to be safe and comprehensive. 
+
+```{r include=FALSE}
+mean_month <- rbind(mean(data[2301:2605][1:22,4]),mean(data[2301:2605][22:43,4]),
+                    mean(data[2301:2605][43:66,4]),mean(data[2301:2605][67:86,4]),
+                    mean(data[2301:2605][87:107,4]),mean(data[2301:2605][108:129,4]),
+                    mean(data[2301:2605][130:151,4]),mean(data[2301:2605][152:171,4]),
+                    mean(data[2301:2605][172:194,4]),mean(data[2301:2605][195:216,4]),
+                    mean(data[2301:2605][217:237,4]),mean(data[2301:2605][237:260,4]),
+                    mean(data[2301:2605][261:281,4]),mean(data[2301:2605][281:305,4]))
+DE_profit <- function(high,low){
+  volume <- 1
+  share <- 0
+  IN <- FALSE
+  for(i in (1:(length(mean_month)-1))){
+    if (100*(mean_month[i+1]-mean_month[i])/mean_month[i]>high & IN==FALSE){
+      share <- volume/mean_month[i]
+      IN <- TRUE
+    }else if(100*(mean_month[i+1]-mean_month[i])/mean_month[i]<low & IN==TRUE){
+      volume <- share*mean_month[i]
+      share <- 0
+      IN <- FALSE
+    }
+  }
+  if(IN==TRUE){
+    return(share*mean_month[length(mean_month)])
+  } else return(volume)
+}
+```
+
+The profit calculated from Holt Winter prediction on test period's monthly mean closed prices is `r DE_profit(DEResults$optim$bestmem[1],DEResults$optim$bestmem[2])`
+
+The profit calculated from Holt Winter prediction on test period's daily closed prices is `r profit_calculation(DEResults$optim$bestmem[1],DEResults$optim$bestmem[2])`
+
+## 5. Discussion and conclusion between two approaches   
+
+As part of the objectives of this study is to compare the prediction results in daily basis between LSTM model and Holt-Winters approach in terms of the profit calculation. We can obviously see that the profit calculated from LSTM model is 8.38% on test period while the traditional approach gives us profit of 5.21% which is significantly larger than Holt-Winter model but when we saw especially on the monthly basis with Holt-Winter model, it also provides a larger profit of 13.5%, which is greater than that of LSTM. Thus, we can make a conclusion based on the observation that LSTM is a useful technique to predict the future price of stocks and currencies. 
+
+However, our comparison is based on different test time divides for Holt-Winter model. The Holt Winter model also fits all the daily training closed prices into monthly prices so it is not very proper to compare Holt Winter with LSTM for these reasons.
+
+Concerning the improvements on LSTM model, some potential threads are:
+1.	Apply wide-deep model, which enables us to mix low-order features to later generated features. This is the mainstream method to improve the performance of Neural Network.
+2.	Add embedding layer before LSTM model is a common practice when using RNN to deal with text and image data. Whether this is applicable to time series data remains to be explored.
+3.	Introduce attention mechanism to the LSTM model, and potentially stack multiple attention layers.
+4.	Replacing LSTM with TCNN and Dense layer with Transformer.
+5.	As mentioned earlier, we can optimize LSTM with GA , which is not done in our report due to the limitation of computation resources.
